@@ -1,4 +1,3 @@
-// User.java
 package com.ecosmart.ecosmart_bin.entity;
 
 import jakarta.persistence.*;
@@ -28,4 +27,14 @@ public class User {
     private int points;
     private String role; // USER, ADMIN, AGENT
     private String telephone;
+
+    // ✅ AJOUT 1 — numéro de carte étudiante (optionnel, unique en base)
+    // Permet la connexion par carte au lieu de l'email
+    // Exemple : "ETU-2024-00123"
+    @Column(unique = true)
+    private String carteEtudiante;
+
+    // ✅ AJOUT 2 — flag étudiant vérifié
+    // Si true → les points sont multipliés x2 à chaque dépôt
+    private boolean estEtudiant;
 }

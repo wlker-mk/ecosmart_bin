@@ -13,77 +13,49 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 
-/**
- * ============================================================
- *  AuthController — Gestion de l'authentification
- * ============================================================
- *
- *  BASE URL : /api/auth
- *
- *  Endpoints :
- *  ┌──────────────────────────────────────────────────────────┐
- *  │  POST  /api/auth/register  → Inscription utilisateur     │
- *  │  POST  /api/auth/login     → Connexion utilisateur       │
- *  └──────────────────────────────────────────────────────────┘
- *
- *  ⚠️  DÉMO : mots de passe en clair.
- *  En production → BCryptPasswordEncoder + JWT.
- */
 @RestController
 @RequestMapping("/api/auth")
 @RequiredArgsConstructor
-@Tag(name = "🔐 Authentification", description = "Inscription et connexion des utilisateurs")
+@Tag(name = "🔐 Authentification", description = "Inscription et connexion (email ou carte étudiante)")
 public class AuthController {
 
     private final UserService userService;
 
-    // =========================================================
-    //  POST /api/auth/register
-    // =========================================================
-
-    /**
-     * Inscrit un nouvel utilisateur.
-     *
-     * Corps attendu :
-     * {
-     *   "nom": "Dupont", "prenom": "Jean",
-     *   "email": "jean@example.com",
-     *   "password": "motdepasse123",
-     *   "telephone": "+228 90000000"
-     * }
-     *
-     * Réponse 200 : { "message", "userId", "nom", "email" }
-     * Réponse 400 : { "erreur": "Email déjà utilisé" }
-     */
     @PostMapping("/register")
-    @Operation(
-            summary = "Inscription d'un nouvel utilisateur",
-            description = "Crée un compte avec le rôle USER et 0 points. " +
-                    "Erreur 400 si l'email existe déjà."
-    )
+    @Operation(summary = "Inscription (citoyen ou étudiant)",
+            description = "Si 'carteEtudiante' fourni → compte étudiant + 10 pts bonus. Points x2 par dépôt.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Inscription réussie"),
-            @ApiResponse(responseCode = "400", description = "Email déjà utilisé")
+            @ApiResponse(responseCode = "400", description = "Email ou carte déjà utilisés")
     })
-    @io.swagger.v3.oas.annotations.parameters.RequestBody(
-            content = @Content(examples = @ExampleObject(value =
-                    "{ \"nom\": \"Dupont\", \"prenom\": \"Jean\", " +
-                            "\"email\": \"jean@example.com\", \"password\": \"motdepasse123\", " +
-                            "\"telephone\": \"+228 90000000\" }"))
-    )
+    @io.swagger.v3.oas.annotations.parameters.RequestBody(content = @Content(examples = {
+            @ExampleObject(name = "Citoyen", value =
+                    "{ \"nom\": \"Dupont\", \"prenom\": \"Jean\", \"email\": \"jean@gmail.com\", " +
+                            "\"password\": \"pass123\", \"telephone\": \"+228 90000000\" }"),
+            @ExampleObject(name = "Étudiant", value =
+                    "{ \"nom\": \"Koffi\", \"prenom\": \"Amavi\", \"email\": \"amavi@univ.tg\", " +
+                            "\"password\": \"pass123\", \"telephone\": \"+228 91000000\", " +
+                            "\"carteEtudiante\": \"ETU-2024-00123\" }")
+    }))
+    // ✅ BUG CORRIGÉ — retourne Map<String,Object> au lieu de ResponseEntity<?>
+    // L'ancien code avec <?> + .orElse() ne compilait pas
     public ResponseEntity<Map<String, Object>> register(@RequestBody RegisterRequest request) {
         try {
             User user = userService.register(request);
             Map<String, Object> response = new HashMap<>();
-            response.put("message", "Inscription réussie");
+            // ✅ AJOUT — message différent selon le type de compte
+            response.put("message", user.isEstEtudiant()
+                    ? "Inscription réussie ! Bienvenue étudiant, +10 points bonus offerts 🎓"
+                    : "Inscription réussie !");
             response.put("userId", user.getId());
             response.put("nom", user.getNom());
             response.put("email", user.getEmail());
+            response.put("points", user.getPoints());
+            response.put("estEtudiant", user.isEstEtudiant()); // ✅ AJOUT
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
             Map<String, Object> erreur = new HashMap<>();
@@ -92,51 +64,47 @@ public class AuthController {
         }
     }
 
-    // =========================================================
-    //  POST /api/auth/login
-    // =========================================================
-
-    /**
-     * Connecte un utilisateur existant.
-     *
-     * Corps attendu :
-     * { "email": "jean@example.com", "password": "motdepasse123" }
-     *
-     * Réponse 200 : { "message", "userId", "nom", "role", "points" }
-     * Réponse 401 : { "erreur": "Email ou mot de passe incorrect" }
-     *
-     * FIX : utilise if/else au lieu de .map().orElse() pour éviter
-     * l'erreur de compilation avec ResponseEntity<?> générique.
-     */
     @PostMapping("/login")
-    @Operation(
-            summary = "Connexion d'un utilisateur",
-            description = "Vérifie l'email et le mot de passe. " +
-                    "Retourne le rôle et les points de l'utilisateur."
-    )
+    @Operation(summary = "Connexion par email OU par carte étudiante",
+            description = "Si carteEtudiante fourni → priorité sur email.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Connexion réussie"),
             @ApiResponse(responseCode = "401", description = "Identifiants incorrects")
     })
-    @io.swagger.v3.oas.annotations.parameters.RequestBody(
-            content = @Content(examples = @ExampleObject(value =
-                    "{ \"email\": \"jean@example.com\", \"password\": \"motdepasse123\" }"))
-    )
+    @io.swagger.v3.oas.annotations.parameters.RequestBody(content = @Content(examples = {
+            @ExampleObject(name = "Par email", value =
+                    "{ \"email\": \"jean@gmail.com\", \"password\": \"pass123\" }"),
+            @ExampleObject(name = "Par carte étudiante", value =      // ✅ AJOUT
+                    "{ \"carteEtudiante\": \"ETU-2024-00123\", \"password\": \"pass123\" }")
+    }))
+    // ✅ BUG CORRIGÉ — utilise if/else au lieu de .map().orElse()
+    // .map().orElse() avec ResponseEntity<?> = erreur de compilation garantie
     public ResponseEntity<Map<String, Object>> login(@RequestBody LoginRequest request) {
-        Optional<User> optUser = userService.login(request.getEmail(), request.getPassword());
+        Optional<User> optUser;
+
+        // ✅ AJOUT — détection automatique du mode de connexion
+        if (request.getCarteEtudiante() != null && !request.getCarteEtudiante().isBlank()) {
+            optUser = userService.loginParCarte(request.getCarteEtudiante(), request.getPassword());
+        } else {
+            optUser = userService.loginParEmail(request.getEmail(), request.getPassword());
+        }
 
         if (optUser.isPresent()) {
             User user = optUser.get();
             Map<String, Object> response = new HashMap<>();
-            response.put("message", "Connexion réussie");
+            response.put("message", "Connexion réussie !");
             response.put("userId", user.getId());
             response.put("nom", user.getNom());
+            response.put("prenom", user.getPrenom());
+            response.put("email", user.getEmail());
             response.put("role", user.getRole());
             response.put("points", user.getPoints());
+            response.put("estEtudiant", user.isEstEtudiant());       // ✅ AJOUT
+            response.put("carteEtudiante", user.getCarteEtudiante()); // ✅ AJOUT
             return ResponseEntity.ok(response);
         } else {
             Map<String, Object> erreur = new HashMap<>();
-            erreur.put("erreur", "Email ou mot de passe incorrect");
+            erreur.put("erreur", "Identifiants incorrects. Vérifiez votre email/carte et mot de passe.");
             return ResponseEntity.status(401).body(erreur);
         }
     }
