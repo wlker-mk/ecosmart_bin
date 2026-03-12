@@ -44,7 +44,7 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/api/depot")
 @RequiredArgsConstructor
-@Tag(name = "♻️ Dépôt Plastique", description = "Enregistrement des dépôts et calcul des points")
+@Tag(name = "Dépôt Plastique", description = "Enregistrement des dépôts et calcul des points")
 public class DepositController {
 
     private final DepositService depositService;

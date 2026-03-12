@@ -45,7 +45,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/bins")
 @RequiredArgsConstructor
-@Tag(name = "🗑️ Bornes", description = "Gestion et suivi des bornes intelligentes de collecte")
+@Tag(name = "Bornes", description = "Gestion et suivi des bornes intelligentes de collecte")
 public class BinController {
 
     private final BinService binService;

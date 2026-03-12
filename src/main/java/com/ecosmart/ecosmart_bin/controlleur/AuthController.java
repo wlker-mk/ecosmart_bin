@@ -20,7 +20,7 @@ import java.util.Optional;
 @RestController
 @RequestMapping("/api/auth")
 @RequiredArgsConstructor
-@Tag(name = "🔐 Authentification", description = "Inscription et connexion (email ou carte étudiante)")
+@Tag(name = "Authentification", description = "Inscription et connexion (email ou carte étudiante)")
 public class AuthController {
 
     private final UserService userService;

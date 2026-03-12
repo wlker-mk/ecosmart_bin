@@ -49,7 +49,7 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/api/rewards")
 @RequiredArgsConstructor
-@Tag(name = "🎁 Récompenses", description = "Gestion des récompenses et échanges de points")
+@Tag(name = "Récompenses", description = "Gestion des récompenses et échanges de points")
 public class RewardController {
 
     private final RewardService rewardService;

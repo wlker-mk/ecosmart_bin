@@ -42,7 +42,7 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/api/admin")
 @RequiredArgsConstructor
-@Tag(name = "🛠️ Administration", description = "Dashboard admin, statistiques et gestion des utilisateurs")
+@Tag(name = "Administration", description = "Dashboard admin, statistiques et gestion des utilisateurs")
 public class AdminController {
 
     private final UserService userService;
