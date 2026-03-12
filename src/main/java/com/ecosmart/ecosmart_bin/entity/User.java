@@ -1,11 +1,15 @@
+// User.java
 package com.ecosmart.ecosmart_bin.entity;
 
-import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
+import jakarta.persistence.*;
+import lombok.*;
 
 @Entity
+@Table(name = "users")
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
 public class User {
 
     @Id
@@ -13,12 +17,15 @@ public class User {
     private Long id;
 
     private String nom;
+    private String prenom;
 
+    @Column(unique = true, nullable = false)
     private String email;
 
+    @Column(nullable = false)
     private String password;
 
     private int points;
-
-    private String role;
+    private String role; // USER, ADMIN, AGENT
+    private String telephone;
 }

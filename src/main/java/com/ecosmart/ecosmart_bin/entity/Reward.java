@@ -1,17 +1,15 @@
+// Reward.java
 package com.ecosmart.ecosmart_bin.entity;
 
-import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import lombok.NoArgsConstructor;
+import jakarta.persistence.*;
+import lombok.*;
 
 @Entity
+@Table(name = "rewards")
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
+@Builder
 public class Reward {
 
     @Id
@@ -21,4 +19,5 @@ public class Reward {
     private String nom;
     private String description;
     private int pointsRequis;
+    private boolean disponible;
 }
