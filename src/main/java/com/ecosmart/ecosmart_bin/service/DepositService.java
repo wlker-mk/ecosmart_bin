@@ -1,4 +1,3 @@
-// DepositService.java
 package com.ecosmart.ecosmart_bin.service;
 
 import com.ecosmart.ecosmart_bin.dto.DepositRequest;
@@ -10,6 +9,7 @@ import com.ecosmart.ecosmart_bin.repository.DepositRepository;
 import com.ecosmart.ecosmart_bin.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -22,9 +22,17 @@ public class DepositService {
     private final BinRepository binRepository;
     private final UserService userService;
 
-    private static final double POINTS_PAR_100G = 1.0;
-
+    /**
+     * Enregistre un scan de la borne (niveau 1 — plaque).
+     *
+     * Règles :
+     *  - La plaque s'ouvre TOUJOURS (niveau 2 reçoit le déchet dans tous les cas)
+     *  - Points attribués SEULEMENT si scanResultat = ACCEPTE
+     *  - Si étudiant -> points x2 (géré dans UserService.addPoints)
+     *  - On incrémente nombreDepots dans tous les cas
+     */
     public Deposit enregistrerDepot(DepositRequest request) {
+
         User user = userRepository.findById(request.getUserId())
                 .orElseThrow(() -> new RuntimeException("Utilisateur introuvable"));
 
@@ -32,27 +40,35 @@ public class DepositService {
                 .orElseThrow(() -> new RuntimeException("Borne introuvable"));
 
         if ("PLEIN".equals(bin.getEtat())) {
-            throw new RuntimeException("La borne est pleine");
+            throw new RuntimeException("La borne est pleine, veuillez choisir une autre borne");
         }
 
-        int pointsGagnes = (int) (request.getPoids() / 100 * POINTS_PAR_100G);
+        // Points = 0 par défaut (REFUSE ou typePlastique null)
+        int pointsGagnes = 0;
+        if ("ACCEPTE".equals(request.getScanResultat()) && request.getTypePlastique() != null) {
+            pointsGagnes = request.getTypePlastique().getPoints();
+        }
 
         Deposit deposit = Deposit.builder()
                 .user(user)
                 .bin(bin)
-                .poids(request.getPoids())
+                .typePlastique(request.getTypePlastique())
+                .scanResultat(request.getScanResultat())
                 .pointsGagnes(pointsGagnes)
                 .dateDepot(LocalDateTime.now())
                 .build();
 
         depositRepository.save(deposit);
 
-        double nouveauNiveau = bin.getNiveauRemplissage() + (request.getPoids() / 10000.0 * 100);
-        bin.setNiveauRemplissage(Math.min(nouveauNiveau, 100));
-        bin.setEtat(nouveauNiveau >= 90 ? "PLEIN" : nouveauNiveau >= 50 ? "PARTIEL" : "VIDE");
+        // Incrémenter le compteur de dépôts de la borne (plaque ouvre toujours)
+        bin.setNombreDepots(bin.getNombreDepots() + 1);
         binRepository.save(bin);
 
-        userService.addPoints(user, pointsGagnes);
+        // Ajouter les points seulement si plastique reconnu
+        if (pointsGagnes > 0) {
+            userService.addPoints(user, pointsGagnes); // x2 si étudiant
+        }
+
         return deposit;
     }
 
@@ -64,8 +80,11 @@ public class DepositService {
         return depositRepository.findAll();
     }
 
-    public Double getTotalPoidsCollecte() {
-        Double total = depositRepository.totalPoidsCollecte();
-        return total != null ? total : 0.0;
+    public Long getTotalDepotsAcceptes() {
+        return depositRepository.countByScanResultat("ACCEPTE");
+    }
+
+    public Long getTotalDepotsRefuses() {
+        return depositRepository.countByScanResultat("REFUSE");
     }
 }

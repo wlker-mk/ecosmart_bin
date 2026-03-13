@@ -22,29 +22,29 @@ import java.util.stream.Collectors;
 
 /**
  * ============================================================
- *  DepositController — Gestion des dépôts de plastique
+ *  DepositController — Scan et dépôt de déchets
  * ============================================================
  *
  *  BASE URL : /api/depot
  *
- *  Endpoints :
  *  ┌────────────────────────────────────────────────────────────────┐
- *  │  POST  /api/depot                    → Enregistrer un dépôt    │
- *  │  GET   /api/depot/historique/{id}    → Historique utilisateur  │
- *  │  GET   /api/depot/total-poids        → Total plastique collecté│
+ *  │  POST  /api/depot                  -> Enregistrer un scan      │
+ *  │  GET   /api/depot/historique/{id}  -> Historique utilisateur   │
+ *  │  GET   /api/depot/stats            -> Stats globales scan      │
  *  └────────────────────────────────────────────────────────────────┘
  *
- *  Logique de points : 1 point par tranche de 100g déposés.
- *  Exemple : 350g déposés → 3 points gagnés.
+ *  Règle fondamentale :
+ *   - La plaque (niveau 1) s'ouvre TOUJOURS après le scan
+ *   - Les points sont attribués SEULEMENT si scanResultat = ACCEPTE
+ *   - Si étudiant -> points x2 (géré dans UserService)
  *
- *  ⚠️  FIX : on retourne des DepositDTO et non des entités Deposit
- *  pour éviter la boucle infinie JSON :
- *  Deposit → User → List<Deposit> → User → ... = CRASH 500
+ *  Points par type de plastique :
+ *   PET=5  HDPE=4  PVC=3  PP=3  LDPE=2  PS=2  AUTRE=1
  */
 @RestController
 @RequestMapping("/api/depot")
 @RequiredArgsConstructor
-@Tag(name = "Dépôt Plastique", description = "Enregistrement des dépôts et calcul des points")
+@Tag(name = "Depot Plastique", description = "Scan IoT et enregistrement des dépôts")
 public class DepositController {
 
     private final DepositService depositService;
@@ -52,51 +52,47 @@ public class DepositController {
     // =========================================================
     //  POST /api/depot
     // =========================================================
-
-    /**
-     * Enregistre un dépôt de plastique fait par un utilisateur sur une borne.
-     *
-     * Ce que fait cet endpoint :
-     *  1. Vérifie que l'utilisateur et la borne existent
-     *  2. Vérifie que la borne n'est pas PLEIN
-     *  3. Calcule les points gagnés (1 pt / 100g)
-     *  4. Sauvegarde le dépôt en base
-     *  5. Met à jour le niveau de remplissage de la borne
-     *  6. Ajoute les points au compte de l'utilisateur
-     *
-     * Corps attendu :
-     * { "userId": 1, "binId": 2, "poids": 350.0 }
-     *
-     * Réponse 200 :
-     * { "message", "depositId", "poids", "pointsGagnes", "date" }
-     *
-     * Réponse 400 : borne introuvable / utilisateur introuvable / borne pleine
-     */
     @PostMapping
     @Operation(
-            summary = "Enregistrer un dépôt de plastique",
-            description = "Calcule automatiquement les points (1 pt / 100g) et met à jour " +
-                    "le niveau de remplissage de la borne. Erreur si la borne est PLEIN."
+            summary = "Enregistrer un scan (IoT niveau 1)",
+            description = "Appelé par le dispositif IoT après le scan de la plaque. " +
+                    "La plaque s'ouvre TOUJOURS. " +
+                    "Points attribués SEULEMENT si scanResultat=ACCEPTE et typePlastique non null. " +
+                    "Si scanResultat=REFUSE : 0 points mais la plaque ouvre quand même."
     )
     @ApiResponses({
-            @ApiResponse(responseCode = "200", description = "Dépôt enregistré, points attribués"),
-            @ApiResponse(responseCode = "400", description = "Borne pleine, ou utilisateur/borne introuvable")
+            @ApiResponse(responseCode = "200", description = "Scan enregistré, plaque ouverte"),
+            @ApiResponse(responseCode = "400", description = "Borne pleine ou user/borne introuvable")
     })
-    @io.swagger.v3.oas.annotations.parameters.RequestBody(
-            content = @Content(examples = @ExampleObject(value =
-                    "{ \"userId\": 1, \"binId\": 1, \"poids\": 350.0 }"))
-    )
+    @io.swagger.v3.oas.annotations.parameters.RequestBody(content = @Content(examples = {
+            @ExampleObject(name = "Plastique reconnu (PET)", value =
+                    "{ \"userId\": 1, \"binId\": 1, \"typePlastique\": \"PET\", \"scanResultat\": \"ACCEPTE\" }"),
+            @ExampleObject(name = "Non reconnu (verre, métal...)", value =
+                    "{ \"userId\": 1, \"binId\": 1, \"typePlastique\": null, \"scanResultat\": \"REFUSE\" }")
+    }))
     public ResponseEntity<Map<String, Object>> depot(@RequestBody DepositRequest request) {
         try {
             Deposit deposit = depositService.enregistrerDepot(request);
             Map<String, Object> response = new HashMap<>();
-            response.put("message", "Dépôt enregistré avec succès !");
+
+            // Message différent selon le résultat du scan
+            if ("ACCEPTE".equals(deposit.getScanResultat())) {
+                response.put("message", "Plastique reconnu ! Points attribués.");
+                response.put("typePlastique", deposit.getTypePlastique());
+                response.put("pointsGagnes", deposit.getPointsGagnes());
+                response.put("totalPointsUser", deposit.getUser().getPoints());
+            } else {
+                response.put("message", "Déchet non reconnu comme plastique. Aucun point attribué.");
+                response.put("pointsGagnes", 0);
+            }
+
             response.put("depositId", deposit.getId());
-            response.put("poids", deposit.getPoids() + "g");
-            response.put("pointsGagnes", deposit.getPointsGagnes());
+            response.put("scanResultat", deposit.getScanResultat());
+            response.put("plaqueOuverte", true); // toujours true
             response.put("date", deposit.getDateDepot().toString());
-            response.put("totalPointsUser", deposit.getUser().getPoints());
+
             return ResponseEntity.ok(response);
+
         } catch (RuntimeException e) {
             Map<String, Object> erreur = new HashMap<>();
             erreur.put("erreur", e.getMessage());
@@ -107,20 +103,10 @@ public class DepositController {
     // =========================================================
     //  GET /api/depot/historique/{userId}
     // =========================================================
-
-    /**
-     * Retourne l'historique complet des dépôts d'un utilisateur.
-     *
-     * FIX : retourne List<DepositDTO> et non List<Deposit>
-     * pour éviter la boucle infinie JSON.
-     *
-     * Réponse 200 : liste de DepositDTO avec userId, binId, poids, points, date
-     */
     @GetMapping("/historique/{userId}")
     @Operation(
             summary = "Historique des dépôts d'un utilisateur",
-            description = "Retourne tous les dépôts effectués par cet utilisateur, triés du plus récent. " +
-                    "Retourne une liste vide [] si l'utilisateur n'a jamais déposé."
+            description = "Retourne tous les scans (acceptés ET refusés) de l'utilisateur."
     )
     @ApiResponse(responseCode = "200", description = "Liste des dépôts")
     public ResponseEntity<List<DepositDTO>> historique(
@@ -134,28 +120,19 @@ public class DepositController {
     }
 
     // =========================================================
-    //  GET /api/depot/total-poids
+    //  GET /api/depot/stats
     // =========================================================
-
-    /**
-     * Retourne le total de plastique collecté sur toutes les bornes.
-     * Utilisé dans le dashboard admin.
-     *
-     * Réponse 200 :
-     * { "totalGrammes": 12500.0, "totalKg": 12.5 }
-     */
-    @GetMapping("/total-poids")
+    @GetMapping("/stats")
     @Operation(
-            summary = "Total du plastique collecté",
-            description = "Retourne la somme de tous les dépôts en grammes et en kg. " +
-                    "Utilisé pour les statistiques du dashboard admin."
+            summary = "Statistiques globales des scans",
+            description = "Retourne le nombre total de scans acceptés et refusés. Utilisé pour le dashboard admin."
     )
-    @ApiResponse(responseCode = "200", description = "Total en grammes et en kg")
-    public ResponseEntity<Map<String, Object>> totalPoids() {
-        double total = depositService.getTotalPoidsCollecte();
+    @ApiResponse(responseCode = "200", description = "Statistiques des scans")
+    public ResponseEntity<Map<String, Object>> stats() {
         Map<String, Object> response = new HashMap<>();
-        response.put("totalGrammes", total);
-        response.put("totalKg", total / 1000);
+        response.put("totalAcceptes", depositService.getTotalDepotsAcceptes());
+        response.put("totalRefuses", depositService.getTotalDepotsRefuses());
+        response.put("totalPointsDistribues", depositService.getTotalDepotsAcceptes());
         return ResponseEntity.ok(response);
     }
 }

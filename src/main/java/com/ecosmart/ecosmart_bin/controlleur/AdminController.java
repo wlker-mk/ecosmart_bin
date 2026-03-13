@@ -42,7 +42,7 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/api/admin")
 @RequiredArgsConstructor
-@Tag(name = "Administration", description = "Dashboard admin, statistiques et gestion des utilisateurs")
+@Tag(name = "🛠️ Administration", description = "Dashboard admin, statistiques et gestion des utilisateurs")
 public class AdminController {
 
     private final UserService userService;
@@ -76,12 +76,11 @@ public class AdminController {
     )
     @ApiResponse(responseCode = "200", description = "Statistiques du dashboard")
     public ResponseEntity<Map<String, Object>> stats() {
-        double totalPoids = depositService.getTotalPoidsCollecte();
         Map<String, Object> response = new HashMap<>();
         response.put("totalUtilisateurs", userService.getAll().size());
-        response.put("totalDepots", depositService.getAllDeposits().size());
-        response.put("totalPlastiqueGrammes", totalPoids);
-        response.put("totalPlastiqueKg", totalPoids / 1000);
+        response.put("totalScans", depositService.getAllDeposits().size());
+        response.put("totalAcceptes", depositService.getTotalDepotsAcceptes());
+        response.put("totalRefuses", depositService.getTotalDepotsRefuses());
         response.put("totalBornes", binService.toutes().size());
         response.put("bornesPleines", binService.getBornesPlein().size());
         return ResponseEntity.ok(response);

@@ -1,5 +1,6 @@
 package com.ecosmart.ecosmart_bin.controlleur;
 
+import com.ecosmart.ecosmart_bin.dto.BinUpdateRequest;
 import com.ecosmart.ecosmart_bin.entity.Bin;
 import com.ecosmart.ecosmart_bin.service.BinService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -24,23 +25,21 @@ import java.util.Map;
  *
  *  BASE URL : /api/bins
  *
- *  Endpoints :
- *  ┌─────────────────────────────────────────────────────────────────┐
- *  │  POST   /api/bins              → Créer une borne (Admin)        │
- *  │  GET    /api/bins              → Lister toutes les bornes        │
- *  │  GET    /api/bins/{id}         → Détail d'une borne             │
- *  │  PUT    /api/bins/{id}/niveau  → Mettre à jour niveau (IoT)     │
- *  │  GET    /api/bins/pleines      → Bornes à vider (Agent)         │
- *  │  DELETE /api/bins/{id}         → Supprimer une borne (Admin)    │
- *  └─────────────────────────────────────────────────────────────────┘
+ *  ┌──────────────────────────────────────────────────────────────────────┐
+ *  │  POST   /api/bins                   -> Créer une borne (Admin)       │
+ *  │  GET    /api/bins                   -> Lister toutes les bornes       │
+ *  │  GET    /api/bins/{id}              -> Détail d'une borne            │
+ *  │  PUT    /api/bins/{id}/inclinaison  -> Capteur niveau 2 (IoT)       │
+ *  │  PUT    /api/bins/{id}/reset        -> Remettre à zéro après vidage  │
+ *  │  GET    /api/bins/pleines           -> Bornes à vider (Agent)        │
+ *  │  DELETE /api/bins/{id}             -> Supprimer une borne (Admin)   │
+ *  └──────────────────────────────────────────────────────────────────────┘
  *
- *  États d'une borne :
- *   - VIDE     : niveau < 50%
- *   - PARTIEL  : 50% ≤ niveau < 90%
- *   - PLEIN    : niveau ≥ 90%  → bloque les nouveaux dépôts
- *
- *  Note : l'endpoint PUT /niveau est appelé par la borne IoT
- *  pour mettre à jour son niveau en temps réel.
+ *  Détection bac plein :
+ *   - Le capteur d'inclinaison (niveau 2) envoie l'angle actuel
+ *   - Si angle >= inclinaisonSeuil configuré -> etat = PLEIN
+ *   - Si angle >= 70% du seuil              -> etat = PARTIEL
+ *   - Sinon                                 -> etat = VIDE
  */
 @RestController
 @RequestMapping("/api/bins")
@@ -53,28 +52,17 @@ public class BinController {
     // =========================================================
     //  POST /api/bins
     // =========================================================
-
-    /**
-     * Crée et enregistre une nouvelle borne dans le système.
-     * La borne démarre avec l'état VIDE et un niveau de 0%.
-     *
-     * Corps attendu :
-     * { "nom": "Borne Campus", "localisation": "Université de Lomé",
-     *   "latitude": 6.1722, "longitude": 1.2314 }
-     *
-     * Réponse 200 : l'entité Bin créée avec son id, etat=VIDE, niveauRemplissage=0
-     */
     @PostMapping
     @Operation(
             summary = "Créer une nouvelle borne (Admin)",
-            description = "Enregistre une borne avec état VIDE et niveau 0%. " +
-                    "Fournir latitude/longitude pour la carte des bornes."
+            description = "Créer une borne. inclinaisonSeuil = angle en degrés au-delà duquel le bac est PLEIN. " +
+                    "Par défaut 30.0° si non fourni."
     )
-    @ApiResponse(responseCode = "200", description = "Borne créée avec succès")
+    @ApiResponse(responseCode = "200", description = "Borne créée")
     @io.swagger.v3.oas.annotations.parameters.RequestBody(
             content = @Content(examples = @ExampleObject(value =
                     "{ \"nom\": \"Borne Campus\", \"localisation\": \"Université de Lomé\", " +
-                            "\"latitude\": 6.1722, \"longitude\": 1.2314 }"))
+                            "\"inclinaisonSeuil\": 30.0, \"latitude\": 6.1722, \"longitude\": 1.2314 }"))
     )
     public ResponseEntity<Bin> creer(@RequestBody Bin bin) {
         return ResponseEntity.ok(binService.creerBorne(bin));
@@ -83,19 +71,8 @@ public class BinController {
     // =========================================================
     //  GET /api/bins
     // =========================================================
-
-    /**
-     * Retourne la liste de toutes les bornes enregistrées.
-     * Utilisé pour afficher la carte des bornes dans l'application.
-     *
-     * Réponse 200 : liste de toutes les bornes avec leur état actuel
-     */
     @GetMapping
-    @Operation(
-            summary = "Lister toutes les bornes",
-            description = "Retourne toutes les bornes avec leur localisation, état et niveau de remplissage. " +
-                    "Utilisé pour la carte interactive de l'application."
-    )
+    @Operation(summary = "Lister toutes les bornes", description = "Retourne toutes les bornes avec leur état et inclinaison actuelle.")
     @ApiResponse(responseCode = "200", description = "Liste des bornes")
     public ResponseEntity<List<Bin>> toutes() {
         return ResponseEntity.ok(binService.toutes());
@@ -104,18 +81,8 @@ public class BinController {
     // =========================================================
     //  GET /api/bins/{id}
     // =========================================================
-
-    /**
-     * Retourne le détail complet d'une borne spécifique.
-     *
-     * Réponse 200 : la borne avec son état, niveau, localisation GPS
-     * Réponse 500 : borne introuvable (RuntimeException)
-     */
     @GetMapping("/{id}")
-    @Operation(
-            summary = "Détail d'une borne",
-            description = "Retourne toutes les informations d'une borne : état, niveau, localisation GPS."
-    )
+    @Operation(summary = "Détail d'une borne")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Borne trouvée"),
             @ApiResponse(responseCode = "500", description = "Borne introuvable")
@@ -127,54 +94,64 @@ public class BinController {
     }
 
     // =========================================================
-    //  PUT /api/bins/{id}/niveau?niveau=75.5
+    //  PUT /api/bins/{id}/inclinaison
     // =========================================================
-
-    /**
-     * Met à jour le niveau de remplissage d'une borne.
-     * Cet endpoint est appelé par la borne IoT automatiquement.
-     *
-     * Calcul automatique de l'état :
-     *  - niveau >= 90 → PLEIN  (bloque les dépôts)
-     *  - niveau >= 50 → PARTIEL
-     *  - niveau < 50  → VIDE
-     *
-     * Exemple : PUT /api/bins/1/niveau?niveau=75.5
-     *
-     * Réponse 200 : la borne mise à jour avec le nouvel état
-     */
-    @PutMapping("/{id}/niveau")
+    @PutMapping("/{id}/inclinaison")
     @Operation(
-            summary = "Mettre à jour le niveau de remplissage (IoT)",
-            description = "Appelé automatiquement par la borne IoT. " +
-                    "Met à jour le niveau (0-100%) et recalcule l'état : " +
-                    "VIDE (<50%), PARTIEL (50-89%), PLEIN (≥90%)."
+            summary = "Mise à jour inclinaison par le capteur IoT (niveau 2)",
+            description = "Appelé automatiquement par le capteur d'inclinaison du bac. " +
+                    "Si inclinaisonActuelle >= inclinaisonSeuil -> etat PLEIN, dépôts bloqués. " +
+                    "Si >= 70% du seuil -> PARTIEL. Sinon -> VIDE."
     )
-    @ApiResponse(responseCode = "200", description = "Niveau mis à jour")
-    public ResponseEntity<Bin> updateNiveau(
+    @ApiResponse(responseCode = "200", description = "Borne mise à jour avec nouvel état")
+    @io.swagger.v3.oas.annotations.parameters.RequestBody(
+            content = @Content(examples = @ExampleObject(value = "{ \"inclinaisonActuelle\": 28.5 }"))
+    )
+    public ResponseEntity<Map<String, Object>> updateInclinaison(
             @Parameter(description = "ID de la borne", example = "1")
             @PathVariable Long id,
-            @Parameter(description = "Nouveau niveau en % (0 à 100)", example = "75.5")
-            @RequestParam double niveau) {
-        return ResponseEntity.ok(binService.mettreAJourNiveau(id, niveau));
+            @RequestBody BinUpdateRequest request) {
+
+        Bin bin = binService.mettreAJourInclinaison(id, request.getInclinaisonActuelle());
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("binId", bin.getId());
+        response.put("inclinaisonActuelle", bin.getInclinaisonActuelle());
+        response.put("inclinaisonSeuil", bin.getInclinaisonSeuil());
+        response.put("etat", bin.getEtat());
+        response.put("alertePlein", "PLEIN".equals(bin.getEtat()));
+
+        return ResponseEntity.ok(response);
+    }
+
+    // =========================================================
+    //  PUT /api/bins/{id}/reset
+    // =========================================================
+    @PutMapping("/{id}/reset")
+    @Operation(
+            summary = "Remettre la borne à zéro (Agent)",
+            description = "Appelé par l'agent après avoir vidé le bac physiquement. " +
+                    "Remet inclinaisonActuelle=0, etat=VIDE, nombreDepots=0."
+    )
+    @ApiResponse(responseCode = "200", description = "Borne remise à zéro")
+    public ResponseEntity<Map<String, Object>> reset(
+            @Parameter(description = "ID de la borne", example = "1")
+            @PathVariable Long id) {
+        Bin bin = binService.remettreBorneAZero(id);
+        Map<String, Object> response = new HashMap<>();
+        response.put("message", "Borne remise à zéro avec succès");
+        response.put("binId", bin.getId());
+        response.put("etat", bin.getEtat());
+        return ResponseEntity.ok(response);
     }
 
     // =========================================================
     //  GET /api/bins/pleines
     // =========================================================
-
-    /**
-     * Retourne uniquement les bornes dont l'état est PLEIN.
-     * Utilisé par les agents de collecte pour savoir quelles
-     * bornes doivent être vidées en priorité.
-     *
-     * Réponse 200 : liste des bornes PLEIN (peut être vide [])
-     */
     @GetMapping("/pleines")
     @Operation(
-            summary = "Lister les bornes pleines à vider",
-            description = "Retourne uniquement les bornes en état PLEIN (niveau ≥ 90%). " +
-                    "Utilisé par les agents de collecte pour planifier leurs tournées."
+            summary = "Bornes pleines à vider (Agent)",
+            description = "Retourne uniquement les bornes en état PLEIN. Liste vide [] si aucune."
     )
     @ApiResponse(responseCode = "200", description = "Liste des bornes pleines")
     public ResponseEntity<List<Bin>> pleines() {
@@ -184,19 +161,8 @@ public class BinController {
     // =========================================================
     //  DELETE /api/bins/{id}
     // =========================================================
-
-    /**
-     * Supprime définitivement une borne du système.
-     * ⚠️ Action irréversible — réservée à l'administrateur.
-     *
-     * Réponse 200 : { "message": "Borne supprimée" }
-     */
     @DeleteMapping("/{id}")
-    @Operation(
-            summary = "Supprimer une borne (Admin)",
-            description = "Suppression définitive. ⚠️ Action irréversible. " +
-                    "Les dépôts liés à cette borne restent en base."
-    )
+    @Operation(summary = "Supprimer une borne (Admin)", description = "Action irréversible.")
     @ApiResponse(responseCode = "200", description = "Borne supprimée")
     public ResponseEntity<Map<String, Object>> supprimer(
             @Parameter(description = "ID de la borne à supprimer", example = "1")

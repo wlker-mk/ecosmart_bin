@@ -28,4 +28,8 @@ public class Deposit {
     @ManyToOne
     @JoinColumn(name = "bin_id", nullable = false)
     private Bin bin;
+    // AJOUTER ces deux champs
+    private TypePlastique typePlastique;  // type reconnu par le scan IA
+
+    private String scanResultat; // ACCEPTE ou REFUSE
 }

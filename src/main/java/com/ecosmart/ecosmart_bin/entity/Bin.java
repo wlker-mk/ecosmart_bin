@@ -21,5 +21,8 @@ public class Bin {
     private String nom;
     private String localisation;
     private String etat; // vide / partiellement / plein
-    private double niveauRemplissage;
+    // APRÈS — données réelles du capteur physique
+    private double inclinaisonActuelle;  // angle envoyé par le capteur (degrés)
+    private double inclinaisonSeuil;     // angle configuré = "bac plein" (ex: 30°)
+    private int nombreDepots;            // compteur de dépôts dans ce bac
 }
